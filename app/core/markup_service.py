@@ -23,18 +23,34 @@ class WallpaperMarkupService:
     def process(self, document: ImageDocument) -> Image.Image:
         return self.process_from_image(document.image, document.sanitized_stem)
 
+    def detect_existing_tech_field_cut_cm(self, image) -> int:
+        """
+        Определяет, сколько сантиметров нужно срезать снизу
+        по последней цифре физической высоты изображения.
+        """
+        height_cm = round(self.converter.px_to_cm(image.height))
+        last_digit = height_cm % 10
+
+        if last_digit in (0, 3, 6, 9):
+            return last_digit
+
+        return 0
+
     def rebuild_existing_tech_field(self, document: ImageDocument) -> Image.Image:
         source_without_footer = self.remove_existing_tech_field(document.image)
         return self.process_from_image(source_without_footer, document.sanitized_stem)
 
-    def remove_existing_tech_field(self, image: Image.Image) -> Image.Image:
-        source = self._normalize_source(image)
-        tech_field_height_px = self.converter.cm_to_px(self.config.tech_field_height_cm)
+    def remove_existing_tech_field(self, image):
+        cut_cm = self.detect_existing_tech_field_cut_cm(image)
+        cut_px = self.converter.cm_to_px(cut_cm)
 
-        if source.height <= tech_field_height_px:
-            raise ValueError('Высота изображения меньше либо равна высоте тех.поля')
+        if cut_px <= 0:
+            return image.copy()
 
-        return source.crop((0, 0, source.width, source.height - tech_field_height_px))
+        if image.height <= cut_px:
+            raise ValueError("Нельзя обрезать тех.поля: высота изображения слишком мала")
+
+        return image.crop((0, 0, image.width, image.height - cut_px))
 
     def process_from_image(self, image: Image.Image, filename: str) -> Image.Image:
         source = self._normalize_source(image)
