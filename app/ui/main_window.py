@@ -20,14 +20,15 @@ from PySide6.QtWidgets import (
 
 from app.application.batch_processor import WallpaperBatchProcessor
 from app.application.file_discovery import ImageFileDiscovery
+from app.core.api_service import ApiService
 from app.core.config import AppConfig
 from app.core.exporter import JpegExporter
 from app.core.image_loader import ImageLoader
 from app.core.markup_service import WallpaperMarkupService
 from app.core.panel_layout_service import PanelLayoutService
 from app.core.qr_service import QrCodeService
-from app.core.thumbnail_service import ThumbnailService
 from app.core.sticker_service import StickerService
+from app.core.thumbnail_service import ThumbnailService
 from app.core.units import UnitConverter
 from app.ui.drag_drop_list import DragDropListWidget
 
@@ -40,10 +41,13 @@ class MainWindow(QMainWindow):
 
         self.config = AppConfig()
         self.converter = UnitConverter(self.config.dpi)
+
         self.image_loader = ImageLoader()
         self.discovery = ImageFileDiscovery(self.image_loader)
         self.panel_layout_service = PanelLayoutService(self.converter, self.config.panel_width_cm)
         self.qr_service = QrCodeService()
+        self.api_service = ApiService()
+
         self.markup_service = WallpaperMarkupService(
             self.config,
             self.converter,
@@ -59,10 +63,12 @@ class MainWindow(QMainWindow):
             self.thumbnail_service,
             self.sticker_service,
             self.exporter,
+            self.api_service,
         )
 
         self.selected_files: list[Path] = []
         self.output_dir = Path('output').resolve()
+
         self._build_ui()
         self._sync_output_dir_ui()
         self._on_rewrite_mode_changed()
@@ -79,7 +85,9 @@ class MainWindow(QMainWindow):
         title.setObjectName('titleLabel')
 
         subtitle = QLabel(
-            'Выбери папку или перетащи сюда файлы/папку. Обрабатываются только изображения. Экспорт всегда в JPG.'
+            'Выбери папку или перетащи сюда файлы/папку.\n'
+            'Обрабатываются только изображения.\n'
+            'Экспорт всегда в JPG.'
         )
         subtitle.setWordWrap(True)
         subtitle.setObjectName('subtitleLabel')
@@ -155,7 +163,9 @@ class MainWindow(QMainWindow):
             self.drop_hint.setText('Выбери корневую папку с вложенными папками изображений или перетащи её сюда')
         else:
             self.drop_hint.setText(
-                f'Добавлено файлов: {len(self.selected_files)}' if self.selected_files else 'Перетащи сюда изображения или целую папку'
+                f'Добавлено файлов: {len(self.selected_files)}'
+                if self.selected_files
+                else 'Перетащи сюда изображения или целую папку'
             )
 
     def select_folder(self) -> None:
@@ -202,6 +212,7 @@ class MainWindow(QMainWindow):
             current = {p.resolve(): p for p in self.selected_files}
             for file_path in files:
                 current[file_path.resolve()] = file_path
+
             self.selected_files = sorted(current.values(), key=lambda p: str(p).lower())
             self.refresh_file_list()
             self.log(f'Добавлено в режим перезаписи: {len(files)} файл(ов)')
@@ -250,7 +261,6 @@ class MainWindow(QMainWindow):
             return
 
         rewrite_mode = self.rewrite_checkbox.isChecked()
-
         self.log('Старт обработки...')
         if rewrite_mode:
             self.log('Режим: перезапись старых тех.полей')
@@ -264,6 +274,7 @@ class MainWindow(QMainWindow):
 
         success_count = 0
         error_count = 0
+
         for result in results:
             if result.success:
                 success_count += 1
@@ -273,7 +284,8 @@ class MainWindow(QMainWindow):
                 error_count += 1
                 self.log(f'ERROR: {result.source_path.name} -> {result.error_message}')
 
-        self.log(f'Готово. Успешно: {success_count}, ошибок: {error_count}')
+        self.log(f'Готово.\nУспешно: {success_count}, ошибок: {error_count}')
+
         if rewrite_mode:
             QMessageBox.information(
                 self,
