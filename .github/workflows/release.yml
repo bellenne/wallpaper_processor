@@ -43,7 +43,12 @@ jobs:
 
       - name: Build app
         shell: pwsh
-        run: pyinstaller WallpaperProcessor.spec --noconfirm
+        run: |
+          pyinstaller main.py `
+            --noconfirm `
+            --windowed `
+            --name WallpaperProcessor `
+            --add-data "assets;assets"
 
       - name: Pack release archive
         shell: pwsh
