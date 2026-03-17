@@ -397,6 +397,13 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 def run_app() -> None:
     app = QApplication(sys.argv)
     app.setStyleSheet(WIN11_DARK_STYLESHEET)
+
+    from app.core.updater import AppUpdater
+
+    if AppUpdater().process_startup_update():
+        return
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
