@@ -276,6 +276,9 @@ class MainWindow(QMainWindow):
         error_count = 0
 
         for result in results:
+            for entry in result.operation_logs:
+                self.log(f'[{result.source_path.name}] {entry}')
+
             if result.success:
                 success_count += 1
                 exported = '; '.join(str(path) for path in result.output_paths)

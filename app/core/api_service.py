@@ -20,14 +20,14 @@ class ApiService:
         width_cm: int,
         height_cm: int,
         preview_image: Image.Image,
-    ) -> None:
+    ) -> requests.Response:
         preview_bytes = self._build_preview_jpeg_bytes(
             image=preview_image,
             max_side_px=800,
             quality=55,
         )
 
-        response = self.session.put(
+        response = self.session.post(
             self.ARTICLE_URL,
             data={
                 'article': article,
@@ -40,15 +40,16 @@ class ApiService:
             timeout=self.timeout,
         )
         response.raise_for_status()
+        return response
 
-    def upload_sticker(self, sticker_image: Image.Image, filename: str) -> None:
+    def upload_sticker(self, sticker_image: Image.Image, filename: str) -> requests.Response:
         sticker_bytes = self._image_to_jpeg_bytes(
             image=sticker_image,
             quality=85,
             dpi=(150, 150),
         )
 
-        response = self.session.put(
+        response = self.session.post(
             self.STICKER_URL,
             files={
                 'image': (f'{filename}_наклейка.jpg', sticker_bytes, 'image/jpeg'),
@@ -56,6 +57,7 @@ class ApiService:
             timeout=self.timeout,
         )
         response.raise_for_status()
+        return response
 
     def _build_preview_jpeg_bytes(
         self,
