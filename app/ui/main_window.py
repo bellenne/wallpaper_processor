@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -31,6 +31,7 @@ from app.core.sticker_service import StickerService
 from app.core.thumbnail_service import ThumbnailService
 from app.core.units import UnitConverter
 from app.ui.drag_drop_list import DragDropListWidget
+from app.ui.processing_worker import ProcessingWorker
 
 
 class MainWindow(QMainWindow):
@@ -68,6 +69,9 @@ class MainWindow(QMainWindow):
 
         self.selected_files: list[Path] = []
         self.output_dir = Path('output').resolve()
+        self.processing_thread: QThread | None = None
+        self.processing_worker: ProcessingWorker | None = None
+        self.processing_rewrite_mode = False
 
         self._build_ui()
         self._sync_output_dir_ui()
@@ -81,13 +85,13 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(16)
 
-        title = QLabel('Подготовка изображений')
+        title = QLabel('\u041f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u043a\u0430 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439')
         title.setObjectName('titleLabel')
 
         subtitle = QLabel(
-            'Выбери папку или перетащи сюда файлы/папку.\n'
-            'Обрабатываются только изображения.\n'
-            'Экспорт всегда в JPG.'
+            '\u0412\u044b\u0431\u0435\u0440\u0438 \u043f\u0430\u043f\u043a\u0443 \u0438\u043b\u0438 \u043f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u0441\u044e\u0434\u0430 \u0444\u0430\u0439\u043b\u044b/\u043f\u0430\u043f\u043a\u0443.\n'
+            '\u041e\u0431\u0440\u0430\u0431\u0430\u0442\u044b\u0432\u0430\u044e\u0442\u0441\u044f \u0442\u043e\u043b\u044c\u043a\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n'
+            '\u042d\u043a\u0441\u043f\u043e\u0440\u0442 \u0432\u0441\u0435\u0433\u0434\u0430 \u0432 JPG.'
         )
         subtitle.setWordWrap(True)
         subtitle.setObjectName('subtitleLabel')
@@ -95,13 +99,13 @@ class MainWindow(QMainWindow):
         top_buttons = QHBoxLayout()
         top_buttons.setSpacing(12)
 
-        self.select_folder_button = QPushButton('Выбрать папку')
+        self.select_folder_button = QPushButton('\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u043f\u0430\u043f\u043a\u0443')
         self.select_folder_button.clicked.connect(self.select_folder)
 
-        self.clear_button = QPushButton('Очистить список')
+        self.clear_button = QPushButton('\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a')
         self.clear_button.clicked.connect(self.clear_files)
 
-        self.process_button = QPushButton('Обработать')
+        self.process_button = QPushButton('\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u0442\u044c')
         self.process_button.clicked.connect(self.process_files)
 
         top_buttons.addWidget(self.select_folder_button)
@@ -109,27 +113,27 @@ class MainWindow(QMainWindow):
         top_buttons.addStretch(1)
         top_buttons.addWidget(self.process_button)
 
-        self.rewrite_checkbox = QCheckBox('Перезаписать старые тех.поля')
+        self.rewrite_checkbox = QCheckBox('\u041f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0441\u0442\u0430\u0440\u044b\u0435 \u0442\u0435\u0445.\u043f\u043e\u043b\u044f')
         self.rewrite_checkbox.stateChanged.connect(self._on_rewrite_mode_changed)
 
         output_layout = QHBoxLayout()
         output_layout.setSpacing(12)
 
-        output_label = QLabel('Папка экспорта')
+        output_label = QLabel('\u041f\u0430\u043f\u043a\u0430 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0430')
         output_label.setObjectName('sectionLabel')
 
         self.output_dir_edit = QLineEdit()
         self.output_dir_edit.setReadOnly(True)
         self.output_dir_edit.setObjectName('pathEdit')
 
-        self.output_dir_button = QPushButton('Выбрать экспорт')
+        self.output_dir_button = QPushButton('\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u044d\u043a\u0441\u043f\u043e\u0440\u0442')
         self.output_dir_button.clicked.connect(self.select_output_folder)
 
         output_layout.addWidget(output_label)
         output_layout.addWidget(self.output_dir_edit, 1)
         output_layout.addWidget(self.output_dir_button)
 
-        self.drop_hint = QLabel('Перетащи сюда изображения или целую папку')
+        self.drop_hint = QLabel('\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u0441\u044e\u0434\u0430 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u0438\u043b\u0438 \u0446\u0435\u043b\u0443\u044e \u043f\u0430\u043f\u043a\u0443')
         self.drop_hint.setObjectName('dropHint')
         self.drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -138,7 +142,7 @@ class MainWindow(QMainWindow):
 
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
-        self.log_box.setPlaceholderText('Здесь появится лог обработки...')
+        self.log_box.setPlaceholderText('\u0417\u0434\u0435\u0441\u044c \u043f\u043e\u044f\u0432\u0438\u0442\u0441\u044f \u043b\u043e\u0433 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438...')
         self.log_box.setMaximumBlockCount(1000)
 
         main_layout.addWidget(title)
@@ -157,47 +161,47 @@ class MainWindow(QMainWindow):
     def _on_rewrite_mode_changed(self) -> None:
         rewrite_mode = self.rewrite_checkbox.isChecked()
         self.output_dir_edit.setEnabled(not rewrite_mode)
-        self.output_dir_button.setEnabled(not rewrite_mode)
+        self.output_dir_button.setEnabled(not rewrite_mode and self.processing_thread is None)
 
         if rewrite_mode:
-            self.drop_hint.setText('Выбери корневую папку с вложенными папками изображений или перетащи её сюда')
+            self.drop_hint.setText('\u0412\u044b\u0431\u0435\u0440\u0438 \u043a\u043e\u0440\u043d\u0435\u0432\u0443\u044e \u043f\u0430\u043f\u043a\u0443 \u0441 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u043c\u0438 \u043f\u0430\u043f\u043a\u0430\u043c\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439 \u0438\u043b\u0438 \u043f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u0435\u0451 \u0441\u044e\u0434\u0430')
         else:
             self.drop_hint.setText(
-                f'Добавлено файлов: {len(self.selected_files)}'
+                f'\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u043e \u0444\u0430\u0439\u043b\u043e\u0432: {len(self.selected_files)}'
                 if self.selected_files
-                else 'Перетащи сюда изображения или целую папку'
+                else '\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u0441\u044e\u0434\u0430 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u0438\u043b\u0438 \u0446\u0435\u043b\u0443\u044e \u043f\u0430\u043f\u043a\u0443'
             )
 
     def select_folder(self) -> None:
         if self.rewrite_checkbox.isChecked():
-            folder = QFileDialog.getExistingDirectory(self, 'Выбери корневую папку с вложенными папками изображений')
+            folder = QFileDialog.getExistingDirectory(self, '\u0412\u044b\u0431\u0435\u0440\u0438 \u043a\u043e\u0440\u043d\u0435\u0432\u0443\u044e \u043f\u0430\u043f\u043a\u0443 \u0441 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u043c\u0438 \u043f\u0430\u043f\u043a\u0430\u043c\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439')
             if not folder:
                 return
 
             files = self.discovery.from_folder_recursive(folder)
             self.selected_files = files
             self.refresh_file_list()
-            self.log(f'Выбрана корневая папка: {folder}')
-            self.log(f'Найдено изображений для перезаписи тех.поля: {len(files)}')
+            self.log(f'\u0412\u044b\u0431\u0440\u0430\u043d\u0430 \u043a\u043e\u0440\u043d\u0435\u0432\u0430\u044f \u043f\u0430\u043f\u043a\u0430: {folder}')
+            self.log(f'\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439 \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u0438 \u0442\u0435\u0445.\u043f\u043e\u043b\u044f: {len(files)}')
             return
 
-        folder = QFileDialog.getExistingDirectory(self, 'Выбери папку с изображениями')
+        folder = QFileDialog.getExistingDirectory(self, '\u0412\u044b\u0431\u0435\u0440\u0438 \u043f\u0430\u043f\u043a\u0443 \u0441 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f\u043c\u0438')
         if not folder:
             return
 
         files = self.discovery.from_folder(folder)
         self.add_files(files)
-        self.log(f'Выбрана папка: {folder}')
-        self.log(f'Найдено изображений: {len(files)}')
+        self.log(f'\u0412\u044b\u0431\u0440\u0430\u043d\u0430 \u043f\u0430\u043f\u043a\u0430: {folder}')
+        self.log(f'\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439: {len(files)}')
 
     def select_output_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, 'Выбери папку для экспорта', str(self.output_dir))
+        folder = QFileDialog.getExistingDirectory(self, '\u0412\u044b\u0431\u0435\u0440\u0438 \u043f\u0430\u043f\u043a\u0443 \u0434\u043b\u044f \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0430', str(self.output_dir))
         if not folder:
             return
 
         self.output_dir = Path(folder).resolve()
         self._sync_output_dir_ui()
-        self.log(f'Папка экспорта: {self.output_dir}')
+        self.log(f'\u041f\u0430\u043f\u043a\u0430 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0430: {self.output_dir}')
 
     def handle_dropped_paths(self, paths: list[str]) -> None:
         if self.rewrite_checkbox.isChecked():
@@ -206,7 +210,7 @@ class MainWindow(QMainWindow):
                 path = Path(raw_path)
                 if path.is_dir():
                     files.extend(self.discovery.from_folder_recursive(path))
-                elif self.image_loader.is_supported_image(path):
+                elif self.discovery.is_processable_image(path):
                     files.append(path)
 
             current = {p.resolve(): p for p in self.selected_files}
@@ -215,12 +219,12 @@ class MainWindow(QMainWindow):
 
             self.selected_files = sorted(current.values(), key=lambda p: str(p).lower())
             self.refresh_file_list()
-            self.log(f'Добавлено в режим перезаписи: {len(files)} файл(ов)')
+            self.log(f'\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u043e \u0432 \u0440\u0435\u0436\u0438\u043c \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u0438: {len(files)} \u0444\u0430\u0439\u043b(\u043e\u0432)')
             return
 
         files = self.discovery.from_mixed_paths(paths)
         self.add_files(files)
-        self.log(f'Добавлено через drag&drop: {len(files)} файл(ов)')
+        self.log(f'\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u043e \u0447\u0435\u0440\u0435\u0437 drag&drop: {len(files)} \u0444\u0430\u0439\u043b(\u043e\u0432)')
 
     def add_files(self, files: list[Path]) -> None:
         current = {p.resolve(): p for p in self.selected_files}
@@ -231,6 +235,9 @@ class MainWindow(QMainWindow):
         self.refresh_file_list()
 
     def clear_files(self) -> None:
+        if self.processing_thread is not None:
+            return
+
         self.selected_files = []
         self.refresh_file_list()
         self.log_box.clear()
@@ -244,63 +251,104 @@ class MainWindow(QMainWindow):
 
         if self.rewrite_checkbox.isChecked():
             self.drop_hint.setText(
-                f'Найдено файлов для перезаписи: {len(self.selected_files)}'
+                f'\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0444\u0430\u0439\u043b\u043e\u0432 \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u0438: {len(self.selected_files)}'
                 if self.selected_files
-                else 'Выбери корневую папку с вложенными папками изображений или перетащи её сюда'
+                else '\u0412\u044b\u0431\u0435\u0440\u0438 \u043a\u043e\u0440\u043d\u0435\u0432\u0443\u044e \u043f\u0430\u043f\u043a\u0443 \u0441 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u043c\u0438 \u043f\u0430\u043f\u043a\u0430\u043c\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439 \u0438\u043b\u0438 \u043f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u0435\u0451 \u0441\u044e\u0434\u0430'
             )
         else:
             self.drop_hint.setText(
-                f'Добавлено файлов: {len(self.selected_files)}'
+                f'\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u043e \u0444\u0430\u0439\u043b\u043e\u0432: {len(self.selected_files)}'
                 if self.selected_files
-                else 'Перетащи сюда изображения или целую папку'
+                else '\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u0441\u044e\u0434\u0430 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u0438\u043b\u0438 \u0446\u0435\u043b\u0443\u044e \u043f\u0430\u043f\u043a\u0443'
             )
 
     def process_files(self) -> None:
         if not self.selected_files:
-            QMessageBox.information(self, 'Нет файлов', 'Сначала добавь файлы или выбери папку.')
+            QMessageBox.information(self, '\u041d\u0435\u0442 \u0444\u0430\u0439\u043b\u043e\u0432', '\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0434\u043e\u0431\u0430\u0432\u044c \u0444\u0430\u0439\u043b\u044b \u0438\u043b\u0438 \u0432\u044b\u0431\u0435\u0440\u0438 \u043f\u0430\u043f\u043a\u0443.')
+            return
+
+        if self.processing_thread is not None:
             return
 
         rewrite_mode = self.rewrite_checkbox.isChecked()
-        self.log('Старт обработки...')
-        if rewrite_mode:
-            self.log('Режим: перезапись старых тех.полей')
-        else:
-            self.log(f'Экспорт в: {self.output_dir}')
+        self.processing_rewrite_mode = rewrite_mode
+        self._set_processing_state(True)
 
-        results = self.batch_processor.process_files(
-            self.selected_files,
-            rewrite_existing_tech_fields=rewrite_mode,
+        self.log('\u0421\u0442\u0430\u0440\u0442 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438...')
+        if rewrite_mode:
+            self.log('\u0420\u0435\u0436\u0438\u043c: \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u044c \u0441\u0442\u0430\u0440\u044b\u0445 \u0442\u0435\u0445.\u043f\u043e\u043b\u0435\u0439')
+        else:
+            self.log(f'\u042d\u043a\u0441\u043f\u043e\u0440\u0442 \u0432: {self.output_dir}')
+
+        self.processing_thread = QThread(self)
+        self.processing_worker = ProcessingWorker(
+            self.batch_processor,
+            list(self.selected_files),
+            rewrite_mode,
+        )
+        self.processing_worker.moveToThread(self.processing_thread)
+
+        self.processing_thread.started.connect(self.processing_worker.run)
+        self.processing_worker.log_message.connect(self.log)
+        self.processing_worker.result_ready.connect(self._handle_processing_result)
+        self.processing_worker.completed.connect(self._handle_processing_completed)
+        self.processing_worker.failed.connect(self._handle_processing_failed)
+        self.processing_worker.finished.connect(self._cleanup_processing)
+        self.processing_worker.finished.connect(self.processing_thread.quit)
+        self.processing_worker.finished.connect(self.processing_worker.deleteLater)
+        self.processing_thread.finished.connect(self.processing_thread.deleteLater)
+
+        self.processing_thread.start()
+
+    def _set_processing_state(self, is_processing: bool) -> None:
+        self.select_folder_button.setEnabled(not is_processing)
+        self.clear_button.setEnabled(not is_processing)
+        self.process_button.setEnabled(not is_processing)
+        self.rewrite_checkbox.setEnabled(not is_processing)
+        self.file_list.setEnabled(not is_processing)
+        self.output_dir_button.setEnabled(not is_processing and not self.rewrite_checkbox.isChecked())
+
+        if is_processing:
+            self.process_button.setText('\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430...')
+        else:
+            self.process_button.setText('\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u0442\u044c')
+            self._on_rewrite_mode_changed()
+
+    def _handle_processing_result(self, result) -> None:
+        if result.success:
+            exported = '; '.join(str(path) for path in result.output_paths)
+            self.log(f'OK: {result.source_path.name} -> {exported}')
+        else:
+            self.log(f'ERROR: {result.source_path.name} -> {result.error_message}')
+
+    def _handle_processing_completed(self, success_count: int, error_count: int) -> None:
+        self.log(f'\u0413\u043e\u0442\u043e\u0432\u043e.\n\u0423\u0441\u043f\u0435\u0448\u043d\u043e: {success_count}, \u043e\u0448\u0438\u0431\u043e\u043a: {error_count}')
+
+        if self.processing_rewrite_mode:
+            QMessageBox.information(
+                self,
+                '\u041f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u044c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0430',
+                f'\u0423\u0441\u043f\u0435\u0448\u043d\u043e: {success_count}\n\u041e\u0448\u0438\u0431\u043e\u043a: {error_count}\n\u0424\u0430\u0439\u043b\u044b \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u0430\u043d\u044b \u043d\u0430 \u043c\u0435\u0441\u0442\u0435.',
+            )
+        else:
+            QMessageBox.information(
+                self,
+                '\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0430',
+                f'\u0423\u0441\u043f\u0435\u0448\u043d\u043e: {success_count}\n\u041e\u0448\u0438\u0431\u043e\u043a: {error_count}\n\u041f\u0430\u043f\u043a\u0430 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432: {self.output_dir}',
+            )
+
+    def _handle_processing_failed(self, message: str) -> None:
+        self.log(f'\u041a\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438: {message}')
+        QMessageBox.warning(
+            self,
+            '\u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438',
+            f'\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430 \u043f\u0440\u0435\u0440\u0432\u0430\u043d\u0430: {message}',
         )
 
-        success_count = 0
-        error_count = 0
-
-        for result in results:
-            for entry in result.operation_logs:
-                self.log(f'[{result.source_path.name}] {entry}')
-
-            if result.success:
-                success_count += 1
-                exported = '; '.join(str(path) for path in result.output_paths)
-                self.log(f'OK: {result.source_path.name} -> {exported}')
-            else:
-                error_count += 1
-                self.log(f'ERROR: {result.source_path.name} -> {result.error_message}')
-
-        self.log(f'Готово.\nУспешно: {success_count}, ошибок: {error_count}')
-
-        if rewrite_mode:
-            QMessageBox.information(
-                self,
-                'Перезапись завершена',
-                f'Успешно: {success_count}\nОшибок: {error_count}\nФайлы перезаписаны на месте.',
-            )
-        else:
-            QMessageBox.information(
-                self,
-                'Обработка завершена',
-                f'Успешно: {success_count}\nОшибок: {error_count}\nПапка результатов: {self.output_dir}',
-            )
+    def _cleanup_processing(self) -> None:
+        self._set_processing_state(False)
+        self.processing_worker = None
+        self.processing_thread = None
 
     def log(self, message: str) -> None:
         self.log_box.appendPlainText(message)
@@ -406,4 +454,3 @@ def run_app() -> None:
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
-

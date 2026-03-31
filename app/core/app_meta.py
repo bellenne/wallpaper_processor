@@ -1,5 +1,5 @@
 APP_NAME = 'Wallpaper Processor'
-APP_VERSION = '1.1.1'
+APP_VERSION = '1.1.2'
 GITHUB_REPO = 'bellenne/wallpaper_processor'
 RELEASE_ASSET_NAME = 'WallpaperProcessor-win64.zip'
 APP_DIR_NAME = 'WallpaperProcessor'
